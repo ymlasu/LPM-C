@@ -1,0 +1,18 @@
+cmake_minimum_required(VERSION 3.10)
+
+set(OBJ lpmc)
+set(CMAKE_C_COMPILER "icc")
+
+project(${OBJ} LANGUAGES C)
+find_package(MKL CONFIG REQUIRED)
+find_package(OpenMP)
+
+include_directories(include)
+file(GLOB SOURCES "src/*.c")
+add_executable(${OBJ} ${SOURCES})
+set(CMAKE_C_FLAGS_RELEASE "-O3")
+set_property(TARGET ${OBJ} PROPERTY C_STANDARD 11)
+
+target_include_directories(${OBJ} PUBLIC $<TARGET_PROPERTY:MKL::MKL,INTERFACE_INCLUDE_DIRECTORIES>)
+target_compile_options(${OBJ} PUBLIC $<TARGET_PROPERTY:MKL::MKL,INTERFACE_COMPILE_OPTIONS>)
+target_link_libraries(${OBJ} PUBLIC MKL::MKL OpenMP::OpenMP_C)
