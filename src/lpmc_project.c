@@ -55,6 +55,10 @@ int main(int argc, char *argv[])
 
     printf("OpenMP with %d/%d threads for bond force calculation\n", nt_force, nt);
 
+    // create a folder to store output data
+    // const char *data_folder = "Data";
+    // mkdir(data_folder, S_IRWXU);
+
     omp_set_num_threads(nt);
     char *paraFile;
     if (argc == 1)
@@ -250,22 +254,22 @@ int main(int argc, char *argv[])
     int out_step = 1;      // print initial strain and dump info, output step is set as 1
     char dumpflag = 'm';   // 's' for single step; 'm' for multiple step
 
-    char dispFile[] = "result_disp.txt";
-    char dispFile1[] = "result_disp_CMOD1.txt";
-    char dispFile2[] = "result_disp_CMOD2.txt";
-    char forceFile[] = "result_force.txt";
-    char strainFile[] = "result_strain.txt";
-    char stressFile[] = "result_stress.txt";
-    char dumpFile[] = "result_position.dump";
-    char actFile[] = "result_Jact.txt";
-    char slipFile[] = "result_slipRSS.txt";
-    char damageFile[] = "result_damage.txt";
-    char bondFile[] = "result_brokenbonds.txt";
-    char stretchFile[] = "result_stretch.txt";
-    char dlambdaFile[] = "result_dlambda.txt";
-    char neighborFile[] = "result_neighbor.txt";
-    char cabFile[] = "result_Cab.txt";
-    char bforceFile[] = "result_bforce.txt";
+    char dispFile[] = "../result_disp.txt";
+    char dispFile1[] = "../result_disp_CMOD1.txt";
+    char dispFile2[] = "../result_disp_CMOD2.txt";
+    char forceFile[] = "../result_force.txt";
+    char strainFile[] = "../result_strain.txt";
+    char stressFile[] = "../result_stress.txt";
+    char dumpFile[] = "../result_position.dump";
+    char actFile[] = "../result_Jact.txt";
+    char slipFile[] = "../result_slipRSS.txt";
+    char damageFile[] = "../result_damage.txt";
+    char bondFile[] = "../result_brokenbonds.txt";
+    char stretchFile[] = "../result_stretch.txt";
+    char dlambdaFile[] = "../result_dlambda.txt";
+    char neighborFile[] = "../result_neighbor.txt";
+    char cabFile[] = "../result_Cab.txt";
+    char bforceFile[] = "../result_bforce.txt";
 
     // boundary conditions and whole simulation settings
     int n_steps = 0; // number of loading steps
