@@ -1,14 +1,3 @@
-/******************************************************************************
-** Implemented the solving process of nonlocal lattice particle method(LPM) in
-general cases(2 layers of neighbors);
-**Developed from Hailong Chen& Haoyang Wei's Fortran code;
-* *Supported lattice types : 2D square, 2D hexagon, 3D simple cubic, 3D BCC &
-FCC crystal(crystal plasticity simulation);
-**This code(lpmp) can deal with general elasticand plasticity problems under
-some careful modifications
-** Changyu Meng, cmeng12@asu.edu
-******************************************************************************/
-
 #include "lpm.h"
 
 /* definition of global variables */
@@ -36,7 +25,7 @@ double **xyz, **xyz_initial, **xyz_temp, **distance, **distance_initial, **KnTve
 double **dL_total, **TdL_total, **csx_initial, **csy_initial, **csz_initial, **Ce;
 double **slip_normal, **schmid_tensor, **schmid_tensor_local, **cp_RSS, **stress_tensor;
 double **cp_Cab, **strain_tensor, **dL_ave, **ddL_total, **TddL_total, **F_temp, **ddLp;
-double **dL, **ddL, **bond_stress, **damage_broken, **damage_w;
+double **dL, **ddL, **bond_stress, **damage_broken, **damage_w, **bond_stretch, **bond_vector, **bond_force;
 
 double **Kn, **Tv, **J2_alpha, **damage_local, **damage_nonlocal, **cp_A, **cp_dgy, **cp_dA_single, **J2_beta_eq;
 double ***slip_vector, ***dLp, ***J2_beta, ***damage_D, ***cp_gy, ***cp_A_single;
@@ -51,7 +40,7 @@ int main(int argc, char *argv[])
     printf("==================================================\n");
 
     const int nt = omp_get_max_threads(); /* maximum number of threads provided by the computer */
-    const int nt_force = 3;               /* number of threads for general force calculation */
+    const int nt_force = 5;               /* number of threads for general force calculation */
 
     printf("OpenMP with %d/%d threads for bond force calculation\n", nt_force, nt);
 
@@ -69,7 +58,7 @@ int main(int argc, char *argv[])
     // body-centered cubic with 1 types of slip systems -> 4
     // body-centered cubic with 2 types of slip systems -> 5
     // body-centered cubic with 3 types of slip systems -> 6
-    lattice = 2;
+    lattice = 1;
 
     // dimensionality, int
     if (lattice < 2)
@@ -78,7 +67,7 @@ int main(int argc, char *argv[])
         dim = 3;
 
     // particle radius, double
-    radius = 0.33;
+    radius = 3.2e-3;
 
     // periodic boundary conditions
     // 1 with periodicity, 0 without periodicity
@@ -105,12 +94,12 @@ int main(int argc, char *argv[])
     // box[0] = 0.0, box[1] = 0.01; // 3D
     // box[2] = 0.00971 - 0.01, box[3] = 0.0097150;
     // box[4] = 0.02970 - 0.03, box[5] = 0.029830;
-    // box[0] = -0., box[1] = 10;
-    // box[2] = 0.1, box[3] = 10.1;
-    // box[4] = 0.1, box[5] = 10.1;
-    box[0] = 0.0, box[1] = 50.0; // 3D plate, mm
-    box[2] = 0.0, box[3] = 48.0;
-    box[4] = 0.0, box[5] = 10.0;
+    box[0] = -0., box[1] = 1.;
+    box[2] = -0., box[3] = 1.;
+    box[4] = -0., box[5] = 1.;
+    // box[0] = 0.0, box[1] = 50.0; // 3D plate, mm
+    // box[2] = 0.0, box[3] = 48.0;
+    // box[4] = 0.0, box[5] = 10.0;
     // box[0] = 0.0, box[1] = 20.0; // 2D square plate, mm
     // box[2] = 0.0, box[3] = 20.0;
     // box[4] = 0.0, box[5] = 1.0;
@@ -125,22 +114,21 @@ int main(int argc, char *argv[])
     // readLammps(tempFile, tempSkip);
 
     // move the particles coordinates
-    double movexyz[] = {-0., -0., -0.};
-    // double movexyz[] = {-0.0, 0., 0.};
-    moveParticle(movexyz);
+    // double movexyz[] = {-0., -0., -0.};
+    // // double movexyz[] = {-0.0, 0., 0.};
+    // moveParticle(movexyz);
 
     // create a pre-existed crack
-    double ca1 = -10.0, ca2 = 18.0, w = 1, ch = 24.021;
+    double ca1 = -0.5, ca2 = 0.5, w = 0., ch = 0.5;
     createCrack(ca1, ca2, w, ch);
-    createCrack(ca1, ca2 + 3 * radius, 0.5 * w, ch);
     // removeBlock(-10.0, 5.4128, 9.9386, 10.002, -100, 100);
 
     // modify the configuration
     // removeBlock(-10.0, 10.0, 35.0, 100.0, -100, 100);
     // removeBlock(-10.0, 10.0, -100.0, 13.0, -100, 100);
-    double pc1[3] = {9.9, 13.13, 0.0}, pc2[3] = {9.9, 34.91, 0.0};
-    removeCircle(pc1, 5., 'z'); // remove the particles inside the half circle
-    removeCircle(pc2, 5., 'z');
+    // double pc1[3] = {9.9, 13.13, 0.0}, pc2[3] = {9.9, 34.91, 0.0};
+    // removeCircle(pc1, 5., 'z'); // remove the particles inside the half circle
+    // removeCircle(pc2, 5., 'z');
 
     // cut the cuboid and get a cylinder along z direction
     // double pc[3] = {12.5, 12.5, 25.0};
@@ -168,18 +156,19 @@ int main(int argc, char *argv[])
     ntype = 0;
     type = allocInt1D(nparticle, ntype++); // set particle type as 0 in default
 
-    setTypeRect(pc2[0] - 5.2, pc2[0] + 5.2, pc2[1], 100.0, -100.0, 100.0, ntype++);                                   // type 1
-    setTypeRect(pc1[0] - 5.2, pc1[0] + 5.2, -100, pc1[1], -100.0, 100.0, ntype++);                                    // type 2
-    setTypeRect(pc2[0] - radius, pc2[0] + radius, 40.2 - 2 * radius, 40.2 + radius, -100.0, 100.0, ntype++);          // upper circle line, type 3
-    setTypeRect(pc1[0] - radius, pc1[0] + radius, 7.9 - radius, 7.9 + 2 * radius, -100.0, 100.0, ntype++);            // lower circle line, type 4
-    setTypeRect(50.0 - 2 * radius, 100.0, 24.0 - 2 * radius, 24.0 + 2 * radius, -100.0, 100.0, ntype++);              // side line, type 5
-    setTypeRect(50.0 - 2 * radius, 100.0, 24.0 - 2 * radius, 24.0 + 2 * radius, 5.1 - radius, 5.1 + radius, ntype++); // side point, type 6
-    setTypeRect(-100.0, 1.5 * radius, 22.0, 22.5, -100.0, 100.0, ntype++);                                            // crack tip mouth1, type 7
-    setTypeRect(-100.0, 1.5 * radius, 25.5, 26.0, -100.0, 100.0, ntype++);                                            // crack tip mouth2, type 8
+    setTypeRect(-100.0, 100.0, 1.0 - 2 * radius, 100.0, -100.0, 100.0, ntype++); // top layer, type 1, 2D square, shear
+    setTypeRect(-100.0, 100.0, -100.0, 2 * radius, -100.0, 100.0, ntype++);      // bottom layer, type 2
+    // setTypeRect(-100.0, 2 * radius, 0.1 - 2 * radius, 0.1 + 2 * radius, -100.0, 100.0, ntype++);        // left support point 1, three point bending
+    // setTypeRect(0.2 - 2 * radius, 10000.0, 0.5 - 2 * radius, 0.5 + 2 * radius, -100.0, 100.0, ntype++); // right loading point, type 2
+    // setTypeRect(-100.0, 2 * radius, 0.9 - 2 * radius, 0.9 + 2 * radius, -100.0, 100.0, ntype++);        // left support point 2, type 3
+    // setTypeRect(-100.0, 2 * radius, 0.505, 0.507, -100.0, 100.0, ntype++);                              // crack tip mouth1
+    // setTypeRect(-100.0, 2 * radius, 0.494, 0.495, -100.0, 100.0, ntype++);                              // crack tip mouth2
+
+    setTypeFullNeighbor(ntype++); // set the particle type as 3 if the neighbor list is full
 
     // material elastic parameters setting, MPa
     double C11, C12, C44;
-    double E0 = 115e3, mu0 = 0.28;
+    double E0 = 210e3, mu0 = 0.3;
     // plane strain or 3D
     C11 = E0 * (1.0 - mu0) / (1.0 + mu0) / (1.0 - 2.0 * mu0);
     C12 = E0 * mu0 / (1.0 + mu0) / (1.0 - 2.0 * mu0);
@@ -202,15 +191,10 @@ int main(int argc, char *argv[])
 
     // elasticity or plasticity model settings
     // (0) stress-based J2 plasticity, mixed-linear hardening
-    plmode = 0;
-    sigmay = allocDouble1D(nparticle, 955); // initial yield stress, MPa
-    for (int i = 0; i < nparticle; i++)
-    {
-        if (type[i] >= 1 && type[i] <= 6)
-            sigmay[i] = 1e6; // set a super high yield stress for wedge particles
-    }
-    J2_xi = 0.0;   // 0 for isotropic and 1 for kinematic hardening
-    J2_H = 2401.8; // isotropic hardening modulus, MPa, (1007-955)/0.02165
+    // plmode = 0;
+    // sigmay = allocDouble1D(nparticle, 200); // initial yield stress, Pa
+    // J2_xi = 0;                              // 0 for isotropic and 1 for kinematic hardening
+    // J2_H = 0;                               // isotropic hardening modulus, Pa
 
     // (1) rate-dependent crystal plasticity based on Miehe 2001
     // plmode = 1;
@@ -224,33 +208,32 @@ int main(int argc, char *argv[])
 
     // (3) energy-based J2 plasticity using return-mapping
     // plmode = 3;
-    // sigmay = allocDouble1D(nparticle, 200e6); // initial yield stress, Pa
-    // J2_xi = 0.0;                              // 0 for isotropic and 1 for kinematic hardening
-    // J2_H = 38.714e9;                          // isotropic hardening modulus, Pa
+    // sigmay = allocDouble1D(nparticle, 200); // initial yield stress, Pa
+    // J2_H = 38.714e3;                        // isotropic hardening modulus, Pa
 
     // (5) stress-based ductile fracture simulation, nonlinear hardening
     // plmode = 5;
     // J2_C = 0.0; // kinematic hardening modulus, MPa
 
     // (6) elastic (brittle) material
-    // plmode = 6;
+    plmode = 6;
 
     printf("Constitutive mode is %d\n", plmode);
 
     // damage settings
-    nbreak = 20;               // limit the broken number of bonds in a single iteration, should be an even number
-    critical_bstrain = 1.0e-2; // critical bond strain value at which bond will break
-    damageb_A = 10.0;          // (ductile) damage parameter for bond-based damage evolution rule (ductile fracture)
-    damagec_A = 400.0;         // (ductile) continuum damage evolution parameter, A;
-    damage_threshold = 0.85;   // damage threshold, [0, 1), particle will be frozen after reach this value
-    damage_L = 0.6;            // characteristic length for nonlocal damage
+    nbreak = 2;               // limit the broken number of bonds in a single iteration, should be an even number
+    critical_bstrain = 2.7e-2; // critical bond strain value at which bond will break
+    damageb_A = 10.0;         // (ductile) damage parameter for bond-based damage evolution rule (ductile fracture)
+    damagec_A = 0.0;          // (ductile) continuum damage evolution parameter, A;
+    damage_threshold = 0.9;   // damage threshold, [0, 1), particle will be frozen after reach this value
+    damage_L = 0.5;           // characteristic length for nonlocal damage
 
     // define the crack
-    defineCrack(ca1, ca2 + w, ch);
+    defineCrack(ca1, ca2, ch);
 
     // output parameters
-    char aflag = 'y';      // output directional axis
-    int dtype = 3;         // particle type used to output displacement or force
+    char aflag = 'x';      // output directional axis
+    int dtype = 1;         // particle type used to output displacement or force
     int outdisp_flag = 1;  // output displacement, 0 or 1
     int outforce_flag = 1; // output force, 0 or 1
     int out_step = 1;      // print initial strain and dump info, output step is set as 1
@@ -260,6 +243,7 @@ int main(int argc, char *argv[])
     char dispFile1[] = "result_disp_CMOD1.txt";
     char dispFile2[] = "result_disp_CMOD2.txt";
     char forceFile[] = "result_force.txt";
+    char strainFile[] = "result_strain.txt";
     char stressFile[] = "result_stress.txt";
     char dumpFile[] = "result_position.dump";
     char actFile[] = "result_Jact.txt";
@@ -270,18 +254,19 @@ int main(int argc, char *argv[])
     char dlambdaFile[] = "result_dlambda.txt";
     char neighborFile[] = "result_neighbor.txt";
     char cabFile[] = "result_Cab.txt";
+    char bforceFile[] = "result_bforce.txt";
 
     // boundary conditions and whole simulation settings
     int n_steps = 100; // number of loading steps
     dtime = 0.01;      // time step, s
-    // double step_size = -2000.0; // step size for force or displacement loading
+    // double step_size = -4 * 110.8; // step size for force or displacement loading
     // int n_steps = 10;        // number of loading steps
-    double step_size = -6.4e-3; // step size for force or displacement loading
+    double step_size = -1.5e-4; // step size for force or displacement loading
 
     int nbd = 0, nbf = 0;     // total number of disp or force boundary conditions
     char cal_method[] = "cg"; // calculation method, pardiso or conjugate gradient
     struct dispBCPara dBP[MAXLINE][MAXSMALL] = {0};
-    struct forceBCPara fBP[MAXSMALL] = {0};
+    struct forceBCPara fBP[MAXLINE][MAXSMALL] = {0};
     int load_indicator[MAXLINE] = {0}; // tension (1) or compressive (-1) loading condition for uniaxial loading
 
     // displace boundary conditions
@@ -289,17 +274,20 @@ int main(int argc, char *argv[])
     {
         nbd = 0;
         load_indicator[i] = 1;
-        dBP[i][nbd].type = 3, dBP[i][nbd].flag = 'x', dBP[i][nbd++].step = 0.0;
-        dBP[i][nbd].type = 3, dBP[i][nbd].flag = 'y', dBP[i][nbd++].step = -step_size;
-        dBP[i][nbd].type = 3, dBP[i][nbd].flag = 'z', dBP[i][nbd++].step = 0.0;
-        dBP[i][nbd].type = 4, dBP[i][nbd].flag = 'x', dBP[i][nbd++].step = 0.0;
-        dBP[i][nbd].type = 4, dBP[i][nbd].flag = 'y', dBP[i][nbd++].step = step_size;
-        dBP[i][nbd].type = 4, dBP[i][nbd].flag = 'z', dBP[i][nbd++].step = 0.0;
-
-        dBP[i][nbd].type = 5, dBP[i][nbd].flag = 'y', dBP[i][nbd++].step = 0.0; // side
-        dBP[i][nbd].type = 6, dBP[i][nbd].flag = 'y', dBP[i][nbd++].step = 0.0;
-        dBP[i][nbd].type = 6, dBP[i][nbd].flag = 'z', dBP[i][nbd++].step = 0.0;
+        dBP[i][nbd].type = 1, dBP[i][nbd].flag = 'x', dBP[i][nbd++].step = -step_size; // 2D loading, shear
+        dBP[i][nbd].type = 1, dBP[i][nbd].flag = 'y', dBP[i][nbd++].step = 0.0;
+        dBP[i][nbd].type = 2, dBP[i][nbd].flag = 'x', dBP[i][nbd++].step = 0.0;
+        dBP[i][nbd].type = 2, dBP[i][nbd].flag = 'y', dBP[i][nbd++].step = 0.0;
     }
+    // for (int i = 0; i < n_steps; i++)
+    // {
+    //     nbd = 0;
+    //     load_indicator[i] = 1;
+    //     dBP[i][nbd].type = 1, dBP[i][nbd].flag = 'x', dBP[i][nbd++].step = 0.0; // 2D loading, three point bending
+    //     dBP[i][nbd].type = 2, dBP[i][nbd].flag = 'x', dBP[i][nbd++].step = step_size;
+    //     dBP[i][nbd].type = 2, dBP[i][nbd].flag = 'y', dBP[i][nbd++].step = 0.0;
+    //     dBP[i][nbd].type = 3, dBP[i][nbd].flag = 'x', dBP[i][nbd++].step = 0.0;
+    // }
 
     // force boundary conditions
     // for (int i = 0; i < n_steps; i++)
@@ -307,20 +295,18 @@ int main(int argc, char *argv[])
     //     load_indicator[i] = 1;
 
     //     nbd = 0;
-    //     dBP[i][nbd].type = 1, dBP[i][nbd].flag = 'z', dBP[i][nbd++].step = 0.0; // 3D loading, tension
+    //     dBP[i][nbd].type = 1, dBP[i][nbd].flag = 'y', dBP[i][nbd++].step = 0.0;
     //     dBP[i][nbd].type = 2, dBP[i][nbd].flag = 'x', dBP[i][nbd++].step = 0.0;
-    //     dBP[i][nbd].type = 2, dBP[i][nbd].flag = 'z', dBP[i][nbd++].step = 0.0;
+    //     dBP[i][nbd].type = 2, dBP[i][nbd].flag = 'y', dBP[i][nbd++].step = 0.0;
+    //     dBP[i][nbd].type = 3, dBP[i][nbd].flag = 'x', dBP[i][nbd++].step = 0.0;
     //     dBP[i][nbd].type = 3, dBP[i][nbd].flag = 'y', dBP[i][nbd++].step = 0.0;
     //     dBP[i][nbd].type = 3, dBP[i][nbd].flag = 'z', dBP[i][nbd++].step = 0.0;
-    //     dBP[i][nbd].type = 4, dBP[i][nbd].flag = 'x', dBP[i][nbd++].step = 0.0;
-    //     dBP[i][nbd].type = 4, dBP[i][nbd].flag = 'y', dBP[i][nbd++].step = 0.0;
-    //     dBP[i][nbd].type = 4, dBP[i][nbd].flag = 'z', dBP[i][nbd++].step = 0.0;
 
     //     nbf = 0;
-    //     fBP[nbf].type = 5;
-    //     fBP[nbf].flag1 = 'x', fBP[nbf].step1 = 0.0;
-    //     fBP[nbf].flag2 = 'y', fBP[nbf].step2 = 0.0;
-    //     fBP[nbf].flag3 = 'z', fBP[nbf++].step3 = step_size;
+    //     fBP[i][nbf].type = 4;
+    //     fBP[i][nbf].flag1 = 'x', fBP[i][nbf].step1 = 0.0;
+    //     fBP[i][nbf].flag2 = 'y', fBP[i][nbf].step2 = step_size;
+    //     fBP[i][nbf].flag3 = 'z', fBP[i][nbf++].step3 = 0.0;
     // }
 
     /************************** Simulation begins *************************/
@@ -336,13 +322,14 @@ int main(int argc, char *argv[])
     // output files
     if (outdisp_flag)
     {
+        writeStrain(strainFile, ntype - 1, 0);
         writeDisp(dispFile, aflag, dtype, 0);
-        writeDisp(dispFile1, 'y', 7, 0);
-        writeDisp(dispFile2, 'y', 8, 0);
+        // writeDisp(dispFile1, 'y', 4, 0);
+        // writeDisp(dispFile2, 'y', 5, 0);
     }
     if (outforce_flag)
     {
-        writeStress(stressFile, 0, 0);
+        writeStress(stressFile, ntype - 1, 0);
         writeReaction(forceFile, aflag, dtype, 0);
         // writeForce(forceFile, aflag, 0.3, 0); // lower half body force
     }
@@ -387,8 +374,8 @@ int main(int argc, char *argv[])
         printf("Stiffness matrix calculation costs %f seconds\n", time_t1 - startrun);
 
     label_wei:
-        setDispBC(nbd, dBP[i]); // update displacement BC
-        setForceBC(nbf, fBP);   // update force BC
+        setDispBC(nbd, dBP[i]);  // update displacement BC
+        setForceBC(nbf, fBP[i]); // update force BC
 
         computeBondForceGeneral(4, load_indicator[i]); // incremental updating
         omp_set_num_threads(nt);
@@ -451,6 +438,7 @@ int main(int argc, char *argv[])
             norm_residual = cblas_dnrm2(dim * nparticle, residual, 1);
             printf("Norm of residual is %.3e, residual ratio is %.3e\n", norm_residual, norm_residual / tol_multiplier);
         }
+        computeStrain();
 
         /* accumulate damage, and break bonds when damage reaches critical values */
         int broken_bond = updateDamageGeneral(bondFile, i + 1, plmode);
@@ -488,13 +476,14 @@ int main(int argc, char *argv[])
         {
             if (outdisp_flag)
             {
+                writeStrain(strainFile, ntype - 1, i + 1);
                 writeDisp(dispFile, aflag, dtype, i + 1);
-                writeDisp(dispFile1, 'y', 7, i + 1);
-                writeDisp(dispFile2, 'y', 8, i + 1);
+                // writeDisp(dispFile1, 'y', 4, i + 1);
+                // writeDisp(dispFile2, 'y', 5, i + 1);
             }
             if (outforce_flag)
             {
-                writeStress(stressFile, 0, i + 1);
+                writeStress(stressFile, ntype - 1, i + 1);
                 writeReaction(forceFile, aflag, dtype, i + 1);
                 // writeForce(forceFile, aflag, 0.3, i + 1);
             }
@@ -531,8 +520,16 @@ int main(int argc, char *argv[])
         printf("Time costed for step %d: %f seconds\n\n", i + 1, finishrun - startrun);
     }
 
-    writeBondstretch(stretchFile, 0);
     writeNeighbor(neighborFile);
+    writeBondstretch(stretchFile, 0);
+
+    if (lattice == 2)
+    {
+        computeBondStretch();
+        computeBondForce();
+        writeBondforce(bforceFile, 0);
+        writeBondstretch(stretchFile, 0);
+    }
 
     double finish = omp_get_wtime();
     printf("Computation time for total steps: %f seconds\n\n", finish - start);
